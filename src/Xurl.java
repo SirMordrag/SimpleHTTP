@@ -1,6 +1,7 @@
 import java.io.*;
 import java.net.Socket;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 
@@ -18,9 +19,10 @@ public class Xurl
     // file stuff
     File output_file;
     String req_filename;
-    List<String> req_file;
+    String req_file;
     List<String> req_header;
     BufferedWriter file_writer;
+    int content_length;
 
     // connection stuff
     Socket xurl_socket;
@@ -38,8 +40,6 @@ public class Xurl
         // set the line separator to be in line with http
         System.setProperty("line.separator","\r\n");
         conn_open = false;
-        req_file = new ArrayList<>();
-        req_header = new ArrayList<>();
 
         // DEBUG!
         // I have used https://www.tutorialspoint.com/javaexamples/net_webpage.htm as a reference and
@@ -48,6 +48,7 @@ public class Xurl
 //        url = "http://www.enseignement.polytechnique.fr/";
 //        url = "http://info.cern.ch/";
 //        url = "http://www.enseignement.polytechnique.fr/profs/informatique/Philippe.Chassignet/test.html";
+//        url = "http://www.andor.cz/";
 
         // get the URL
         try {
@@ -93,11 +94,6 @@ public class Xurl
         if (!Objects.equals(req_protocol, "http") && !Objects.equals(req_protocol, "https"))
             error("Invalid protocol, only http(s) is supported");
 
-        // host must have at least one hostname and one domain
-        String[] split_str = req_host.split("\\.");
-//        if (split_str.length < 2) // fixme fails execution
-//            error("Invalid host format");
-
         // port must be valid, if no port provided, we use default 80
         if (req_port == -1)
             req_port = 80;
@@ -107,7 +103,7 @@ public class Xurl
             req_filename = "index";
         else
         {
-            split_str = req_path.split("/");
+            String[] split_str = req_path.split("/");
             req_filename = split_str[split_str.length - 1];
         }
     }
@@ -140,21 +136,20 @@ public class Xurl
     {
         String line;
 
+        // send request
         sendHTTPRequest("GET");
 
+        // download header
+        req_header = new ArrayList<>();
         try
         {
             for (int i = 0; ; i++)
             {
                 line = xurl_reader.readLine();
                 debug(line);
-                if (line == null)
-                {
-                    debug("Finished reading");
-                    break;
-                }
-                req_file.add(line + "\r\n");
-                if (!xurl_reader.ready())
+                req_header.add(line + "\r\n");
+
+                if(line.equals(""))
                     break;
             }
         } catch (IOException e)
@@ -162,71 +157,55 @@ public class Xurl
             error("Failed to read page", e.getMessage());
         }
 
-        debug("Finished reading");
+        debug("Finished reading header");
 
-        // Analyze response
-        String[] split_string;
-        int response = 0;
+        // analyze header
+        analyzeHeader();
 
-        // analyze server response
-        if (req_file.size() >= 1)
+        // download redirect url in needed
+        if(server_response == Err_code.REDIRECT)
+            extractRedirectURL();
+
+        // download file
+        if (server_response == Err_code.OK)
         {
-            split_string = req_file.get(0).split(" ");
-            if (split_string.length < 3)
-                error("Invalid server response");
-            if (!Objects.equals(split_string[0].split("/")[0], req_protocol.toUpperCase()))
-                error("Invalid protocol in server response");
+            req_file = "";
+
             try
             {
-                response = Integer.parseInt(split_string[1]);
-                if (response < 100 || response >= 600)
-                    error(" HTTP error code in response is out of bounds");
-            } catch (NumberFormatException e)
-            {
-                error("Invalid HTTP error code in response", e.getMessage());
+                if (content_length == 0) // no content available
+                    error("No page content provided");
+                else if (content_length == -1) // no Content-Length
+                {
+                    debug("Downloading without CL");
+                    while (xurl_reader.ready())
+                    {
+                        line = xurl_reader.readLine();
+                        debug(line);
+                        req_file += (line + "\r\n");
+                    }
+                }
+                else // Content-Length available
+                {
+                    debug("Downloading using CL");
+                    char[] content = new char[content_length];
+                    int buff;
+                    for(int i = 0; i < content_length; i++)
+                    {
+                        buff = xurl_reader.read();
+                        if (buff == -1)
+                            error("Content reading interrupted immediately");
+                        content[i] = (char) buff;
+                    }
+                    req_file = new String(content);
+                    debug(req_file);
+                    debug("file len: " + req_file.length());
+                }
+            } catch (IOException e) {
+                error("Failed to read page", e.getMessage());
             }
-        } else
-            error("Failed to read content from server (content is null)");
-
-        switch (response / 100)
-        {
-            case (1):
-                server_response = Err_code.INFO;
-                break;
-            case (2):
-                server_response = Err_code.OK;
-                break;
-            case (3):
-                server_response = Err_code.REDIRECT;
-                extractRedirectURL();
-                break;
-            case (4):
-                server_response = Err_code.CLIENT_ERR;
-                break;
-            case (5):
-                server_response = Err_code.SERVER_ERR;
-                break;
         }
 
-        // remove header and store it
-        req_header.clear();
-//        while (req_file.size() != 0)
-//        {
-//            if (!Objects.equals(req_file.get(0), "\r\n"))
-//            {
-//                req_header.add(req_file.get(0));
-//                req_file.remove(0);
-//            }
-//            else
-//            {
-//                req_header.add(req_file.get(0));
-//                req_file.remove(0);
-//                break;
-//            }
-//        }
-
-        if (server_response != Err_code.OK)
-            req_file.clear();
     }
 
     void saveFile()
@@ -236,10 +215,7 @@ public class Xurl
             output_file = new File("./" + req_filename);
             file_writer = new BufferedWriter(new FileWriter(output_file));
 
-            for(int i = 0; i < req_file.size(); i++)
-            {
-                file_writer.write(req_file.get(i));
-            }
+            file_writer.write(req_file);
 
             file_writer.close();
         }
@@ -262,6 +238,75 @@ public class Xurl
             }
         }
         debug("Connection closed");
+    }
+
+    //
+    // Helpers
+    //
+
+    void analyzeHeader()
+    {
+        String[] split_string;
+        int response = 0;
+
+        // analyze header
+        if (req_header.size() >= 1)
+        {
+            // http response
+            split_string = req_header.get(0).split(" ");
+            if (split_string.length < 3)
+                error("Invalid server response");
+            if (!Objects.equals(split_string[0].split("/")[0], req_protocol.toUpperCase()))
+                error("Invalid protocol in server response");
+
+            // error code
+            try
+            {
+                response = Integer.parseInt(split_string[1]);
+                if (response < 100 || response >= 600)
+                    error(" HTTP error code in response is out of bounds");
+            } catch (NumberFormatException e)
+            {
+                error("Invalid HTTP error code in response", e.getMessage());
+            }
+
+            // content length
+            content_length = -1;
+            for(int i = 1; i < req_header.size(); i++)
+            {
+                split_string = req_header.get(i).split(":");
+                if (split_string.length > 1)
+                    if (split_string[0].equals("Content-Length"))
+                        try {
+                            content_length = Integer.parseInt((split_string[1].trim()));
+                        } catch (NumberFormatException e) {
+                            error("Invalid Content-Length in response", e.getMessage());
+                        }
+            }
+            debug("Received cont-len: " + content_length);
+        }
+        else
+            error("Failed to read content from server (content is null)");
+
+        // save err_code
+        switch (response / 100)
+        {
+            case (1):
+                server_response = Err_code.INFO;
+                break;
+            case (2):
+                server_response = Err_code.OK;
+                break;
+            case (3):
+                server_response = Err_code.REDIRECT;
+                break;
+            case (4):
+                server_response = Err_code.CLIENT_ERR;
+                break;
+            case (5):
+                server_response = Err_code.SERVER_ERR;
+                break;
+        }
     }
 
     void extractRedirectURL()
@@ -315,8 +360,16 @@ public class Xurl
     // debug method
     static void debug(String msg)
     {
+        debug(msg, true);
+    }
+
+    static void debug(String msg, boolean ln)
+    {
         if (DEBUG)
-            System.out.println(msg);
+            if (ln)
+                System.out.println(msg);
+            else
+                System.out.print(msg);
     }
 }
 
