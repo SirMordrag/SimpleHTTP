@@ -115,10 +115,11 @@ public class Xurl
         openConnection();
         do {downloadFile();} while (server_response == Err_code.REDIRECT);
         if(server_response == Err_code.OK)
+        {
+            saveFile();
             if (PARSE_BUFFER)
-                DocumentProcessing.parseBuffer(req_file);
-            else
-                saveFile();
+            DocumentProcessing.parseBuffer(req_file);
+        }
         else
             error("Could not retrieve file: " + req_header.get(0));
         closeConnection();
