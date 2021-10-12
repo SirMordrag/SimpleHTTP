@@ -37,24 +37,54 @@ public class Xurl
     boolean conn_open = false;
     Err_code server_response;
 
+    // flag to pass buffer or not
+    boolean PARSE_BUFFER = false;
+
     private enum Err_code {
         INFO, OK, REDIRECT, CLIENT_ERR, SERVER_ERR
     }
 
-    public Xurl(String url, String url_proxy, String url_proxy_port)
+    //
+    // ESSENTIAL FUNCTIONS
+    //
+
+    public static void main(String[] args)
+    {
+        Xurl xurl = new Xurl();
+        if (args.length == 1) // no proxy
+            xurl.doXurl(args[0], null, null);
+        else if (args.length == 3) // proxy & port
+            xurl.doXurl(args[0], args[1], args[2]);
+        else
+            error("Invalid number (" + args.length + ") of arguments given");
+    }
+
+    // function for next exercises
+    static public void download(String url)
+    {
+        Xurl xurl = new Xurl();
+        xurl.PARSE_BUFFER = true;
+        xurl.doXurl(url, null, null);
+    }
+
+    //
+    // MAIN FUNCTIONS
+    //
+    
+    public void doXurl(String url, String url_proxy, String url_proxy_port)
     {
         // I have used https://www.tutorialspoint.com/javaexamples/net_webpage.htm as a reference and
         // general source of inspiration, however, no code was carried over
         if (DEBUG)
         {
             timeout *= 4;
-//            url = "http://www.tutorialspoint.com/javaexamples/net_singleuser.htm";
-//        url = "http://www.enseignement.polytechnique.fr/";
-//        url = "http://info.cern.ch/";
-//        url = "http://www.enseignement.polytechnique.fr/profs/informatique/Philippe.Chassignet/test.html";
-        url = "http://www.enseignement.polytechnique.fr/informatique/profs/Philippe.Chassignet/3A.html";
-//        url_proxy = "103.150.89.154";
-//        url_proxy_port = "8118";
+//          url = "http://www.tutorialspoint.com/javaexamples/net_singleuser.htm";
+//          url = "http://www.enseignement.polytechnique.fr/";
+//          url = "http://info.cern.ch/";
+//          url = "http://www.enseignement.polytechnique.fr/profs/informatique/Philippe.Chassignet/test.html";
+            url = "http://www.enseignement.polytechnique.fr/informatique/profs/Philippe.Chassignet/3A.html";
+//          url_proxy = "103.150.89.154";
+//          url_proxy_port = "8118";
         }
 
         // set the line separator to be in line with http
@@ -85,21 +115,15 @@ public class Xurl
         openConnection();
         do {downloadFile();} while (server_response == Err_code.REDIRECT);
         if(server_response == Err_code.OK)
-            saveFile();
+            if (PARSE_BUFFER)
+                DocumentProcessing.parseBuffer(req_file);
+            else
+                saveFile();
         else
             error("Could not retrieve file: " + req_header.get(0));
         closeConnection();
     }
 
-    public static void main(String[] args)
-    {
-        if (args.length == 1) // no proxy
-            new Xurl(args[0], null, null);
-        else if (args.length == 3) // proxy & port
-            new Xurl(args[0], args[1], args[2]);
-        else
-            error("Invalid number (" + args.length + ") of arguments given");
-    }
 
     // extract all the parameters from the given url
     void extractURL(String url)
@@ -320,7 +344,7 @@ public class Xurl
     }
 
     //
-    // Helpers
+    // FUNCTIONS
     //
 
     void analyzeHeader()
@@ -441,6 +465,10 @@ public class Xurl
     {
         sendHTTPRequest(keyword, null);
     }
+
+    //
+    // MACROS
+    //
 
     // methods for handling errors, because I'm lazy to type it out each time
     static void error(String err_msg)
