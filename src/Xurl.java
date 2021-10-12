@@ -2,10 +2,7 @@ import java.io.*;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Objects;
+import java.util.*;
 
 public class Xurl
 {
@@ -17,7 +14,7 @@ public class Xurl
     String req_host;
     int req_port;
     String req_path;
-    static int timeout = 2000;
+    int timeout = 2000;
 
     // proxy stuff
     boolean use_proxy;
@@ -31,12 +28,13 @@ public class Xurl
     List<String> req_header;
     BufferedWriter file_writer;
     int content_length;
+    boolean chunked_encoding;
 
     // connection stuff
     Socket xurl_socket;
     PrintStream xurl_writer;
     BufferedReader xurl_reader;
-    boolean conn_open;
+    boolean conn_open = false;
     Err_code server_response;
 
     private enum Err_code {
@@ -45,21 +43,22 @@ public class Xurl
 
     public Xurl(String url, String url_proxy, String url_proxy_port)
     {
-        // DEBUG!
         // I have used https://www.tutorialspoint.com/javaexamples/net_webpage.htm as a reference and
         // general source of inspiration, however, no code was carried over
-//        url = "http://www.tutorialspoint.com/javaexamples/net_singleuser.htm";
+        if (DEBUG)
+        {
+            timeout *= 4;
+//            url = "http://www.tutorialspoint.com/javaexamples/net_singleuser.htm";
 //        url = "http://www.enseignement.polytechnique.fr/";
 //        url = "http://info.cern.ch/";
 //        url = "http://www.enseignement.polytechnique.fr/profs/informatique/Philippe.Chassignet/test.html";
-//        url = "http://www.enseignement.polytechnique.fr/informatique/profs/Philippe.Chassignet/3A.html";
+        url = "http://www.enseignement.polytechnique.fr/informatique/profs/Philippe.Chassignet/3A.html";
 //        url_proxy = "103.150.89.154";
-//        url_proxy_port = "8998";
 //        url_proxy_port = "8118";
+        }
 
         // set the line separator to be in line with http
         System.setProperty("line.separator","\r\n");
-        conn_open = false;
 
         if (url_proxy != null)
         {
@@ -215,7 +214,45 @@ public class Xurl
 
             try
             {
-                if (content_length == 0) // no content available
+                if (chunked_encoding)
+                {
+                    int chunk_length = 0;
+                    int buff;
+                    char[] content;
+                    req_file = "";
+
+                    while(true)
+                    {
+                        // get chunk length
+                        line = xurl_reader.readLine();
+                        try {
+                            chunk_length = Integer.parseInt(line.trim(), 16);
+                        } catch (NumberFormatException e) {
+                            error("Non-numeric chunk", e.getMessage());
+                        }
+                        if (chunk_length == 0)
+                            break;
+
+                        // get chunk content
+                        content = new char[chunk_length];
+                        for(int i = 0; i < chunk_length; i++)
+                        {
+                            buff = xurl_reader.read();
+                            if (buff == -1)
+                                error("Content reading interrupted too soon");
+                            content[i] = (char) buff;
+                        }
+
+                        req_file += new String(content);
+
+                        // skip CRLF
+                        xurl_reader.read();
+                        xurl_reader.read();
+                    }
+                    debug(req_file);
+                    debug("file len: " + req_file.length());
+                }
+                else if (content_length == 0) // no content available
                     error("No page content provided");
                 else if (content_length == -1) // no Content-Length
                 {
@@ -236,7 +273,7 @@ public class Xurl
                     {
                         buff = xurl_reader.read();
                         if (buff == -1)
-                            error("Content reading interrupted immediately");
+                            error("Content reading interrupted too soon");
                         content[i] = (char) buff;
                     }
                     req_file = new String(content);
@@ -318,14 +355,25 @@ public class Xurl
             {
                 split_string = req_header.get(i).split(":");
                 if (split_string.length > 1)
+                {
                     if (split_string[0].equals("Content-Length"))
-                        try {
+                        try
+                        {
                             content_length = Integer.parseInt((split_string[1].trim()));
-                        } catch (NumberFormatException e) {
+                        } catch (NumberFormatException e)
+                        {
                             error("Invalid Content-Length in response", e.getMessage());
                         }
+                    if (split_string[0].equals("Transfer-Encoding"))
+                    {
+                        split_string[1] = split_string[1].trim();
+                        if (split_string[1].trim().equalsIgnoreCase("chunked"))
+                            chunked_encoding = true;
+                    }
+                }
             }
             debug("Received cont-len: " + content_length);
+            debug("Chunked transfer encoding: " + chunked_encoding);
         }
         else
             error("Failed to read content from server (content is null)");
