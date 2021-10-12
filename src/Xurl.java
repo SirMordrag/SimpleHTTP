@@ -1,5 +1,7 @@
 import java.io.*;
+import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -15,6 +17,12 @@ public class Xurl
     String req_host;
     int req_port;
     String req_path;
+    static int timeout = 2000;
+
+    // proxy stuff
+    boolean use_proxy;
+    String proxy_name;
+    int proxy_port;
 
     // file stuff
     File output_file;
@@ -35,12 +43,8 @@ public class Xurl
         INFO, OK, REDIRECT, CLIENT_ERR, SERVER_ERR
     }
 
-    public Xurl(String url)
+    public Xurl(String url, String url_proxy, String url_proxy_port)
     {
-        // set the line separator to be in line with http
-        System.setProperty("line.separator","\r\n");
-        conn_open = false;
-
         // DEBUG!
         // I have used https://www.tutorialspoint.com/javaexamples/net_webpage.htm as a reference and
         // general source of inspiration, however, no code was carried over
@@ -48,7 +52,27 @@ public class Xurl
 //        url = "http://www.enseignement.polytechnique.fr/";
 //        url = "http://info.cern.ch/";
 //        url = "http://www.enseignement.polytechnique.fr/profs/informatique/Philippe.Chassignet/test.html";
-//        url = "http://www.andor.cz/";
+//        url = "http://www.enseignement.polytechnique.fr/informatique/profs/Philippe.Chassignet/3A.html";
+//        url_proxy = "103.150.89.154";
+//        url_proxy_port = "8998";
+//        url_proxy_port = "8118";
+
+        // set the line separator to be in line with http
+        System.setProperty("line.separator","\r\n");
+        conn_open = false;
+
+        if (url_proxy != null)
+        {
+            try {
+                use_proxy = true;
+                proxy_name = url_proxy;
+                proxy_port = Integer.parseInt(url_proxy_port);
+            } catch (NumberFormatException e) {
+                error("Invalid format of proxy port", e.getMessage());
+            }
+            if (proxy_port < 0)
+                error("Negative proxy port");
+        }
 
         // get the URL
         try {
@@ -70,10 +94,12 @@ public class Xurl
 
     public static void main(String[] args)
     {
-        if(args.length < 1 || args.length > 3)
-            error("No arguments given");
-
-        new Xurl(args[0]);
+        if (args.length == 1) // no proxy
+            new Xurl(args[0], null, null);
+        else if (args.length == 3) // proxy & port
+            new Xurl(args[0], args[1], args[2]);
+        else
+            error("Invalid number (" + args.length + ") of arguments given");
     }
 
     // extract all the parameters from the given url
@@ -108,15 +134,31 @@ public class Xurl
         }
     }
 
-    void openConnection(){
+    void openConnection()
+    {
+        String host;
+        int port;
+        if (use_proxy)
+        {
+            host = proxy_name;
+            port = proxy_port;
+        }
+        else
+        {
+            host = req_host;
+            port = req_port;
+        }
+
         try
         {
-            xurl_socket = new Socket(req_host, req_port);
-            debug("Connected to " + req_host + ":" + req_port);
+            xurl_socket = new Socket();
+            xurl_socket.connect(new InetSocketAddress(host, port), timeout); // connection timeout
+            xurl_socket.setSoTimeout(timeout); // download timeout
+            debug("Connected to " + host + ":" + port);
         }
         catch (IOException e)
         {
-            error("Failed to open connection at " + req_host + ":" + req_port, e.getMessage());
+            error("Failed to open connection at " + host + ":" + port, e.getMessage());
         }
         conn_open = true;
 
@@ -316,7 +358,18 @@ public class Xurl
 
     void sendHTTPRequest(String keyword, String[] params)
     {
-        xurl_writer.println(keyword.toUpperCase() + " " + req_path + " " + req_protocol.toUpperCase() + "/1.1");
+        String path;
+        if (use_proxy)
+        {
+            if (req_port != 80)
+                path = req_protocol + "://" + req_host + ":" + req_port + req_path;
+            else
+                path = req_protocol + "://" + req_host + req_path;
+        }
+        else
+            path = req_path;
+
+        xurl_writer.println(keyword.toUpperCase() + " " + path + " " + req_protocol.toUpperCase() + "/1.1");
         debug(keyword + " " + req_path + " " + req_protocol.toUpperCase() + "/1.1");
         if (req_port == 80)
             xurl_writer.println("Host: " + req_host);
@@ -344,7 +397,7 @@ public class Xurl
     // methods for handling errors, because I'm lazy to type it out each time
     static void error(String err_msg)
     {
-        System.err.println("Error:" + err_msg);
+        System.err.println("Error: " + err_msg);
         System.exit(1);
     }
 
