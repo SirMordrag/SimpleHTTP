@@ -1,4 +1,24 @@
-// This exercise is completed by Weijun Huang and Voska Vojtech
+/*
+*       XServer - Multithreaded HTTP Server
+*       Authors:    VOSKA, Vojtech
+*                   WEIJUN, Huang
+*       Date:       02.11.2021
+*
+*       Architecture:
+*       * class Xserver is the server
+*           the class creates an HTTP server socket and spawns required number of threads
+*           when a connection is established, the client socket in enqueued and threads take over the processing
+*           contains main()
+*       * class XserverThread implements the thread for Xserver
+*           in dequeues a client socket and passes it onto a newly created XServerProcessor class
+*           thread terminates when interrupted
+*       * class XServerProcessor handles the communication with the client, including request processing
+*           it is single use and blocking - constructor returns only when the client is closed
+*
+*       Usage:
+*           java xserver  <Server port, Int>  <full root directory path, String>  (<thread pool size, Int, default 1>)
+*           without any incoming connection the server closes after 40s (default)
+ */
 
 import java.io.*;
 import java.net.ServerSocket;
@@ -9,25 +29,27 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class Xserver {
+
+public class Xserver
+{
     static boolean DEBUG = true;
 
     int timeout = 40000;
-    int strike_cnt = 0;
     ServerSocket xsrv_socket;
     ArrayList<Thread> thread_list;
     BlockingQueue<Socket> client_queue;
 
-    public Xserver(int port, String root, int pool_size) {
+    public Xserver(int port, String root, int pool_size)
+    {
         client_queue = new LinkedBlockingQueue<>();
-        try {
+        try
+        {
             xsrv_socket = new ServerSocket(port);
             xsrv_socket.setSoTimeout(timeout);
         } catch (IOException e) {
@@ -44,6 +66,7 @@ public class Xserver {
             thread_list.add(thread);
         }
 
+        // main loop
         while (true)
         {
             try
@@ -52,7 +75,7 @@ public class Xserver {
                 if (client_socket != null)
                     handleConnection(client_socket);
             } catch (SocketTimeoutException e) {
-                break;
+                break; // we use timeout as termination method
             } catch (IOException e) {
                 error("Failed to listen to connection", e.getMessage());
             }
@@ -69,39 +92,29 @@ public class Xserver {
         sleep(500);
     }
 
-    void handleConnection(Socket socket) {
-        try {
+    void handleConnection(Socket socket)
+    {
+        try
+        {
             client_queue.put(socket);
         } catch (InterruptedException e) {
             error("Program interrupted", e.getMessage());
         }
     }
 
-    boolean isFinished() {
-//        if (DEBUG)
-//            return false;
-
-        int blocked_cnt = 0;
-        for (Thread thread : thread_list)
-            if (thread.getState() == Thread.State.WAITING)
-                blocked_cnt++;
-        if (blocked_cnt == thread_list.size())
-            strike_cnt++;
-        else
-            strike_cnt = 0;
-
-        return strike_cnt > 5;
-    }
-
-    public static void main(String[] args) {
-        if (args.length == 2) // no proxy
-            try {
+    public static void main(String[] args)
+    {
+        // args: int port, String root, int pool_size
+        if (args.length == 2) // no thread pool
+            try
+            {
                 new Xserver(Integer.parseInt(args[0]), args[1], 1);
             } catch (NumberFormatException e) {
                 error("Invalid argument", e.getMessage());
             }
-        else if (args.length == 3) // proxy & port
-            try {
+        else if (args.length == 3) // thread pool
+            try
+            {
                 new Xserver(Integer.parseInt(args[0]), args[1], Integer.parseInt(args[2]));
             } catch (NumberFormatException e) {
                 error("Invalid argument", e.getMessage());
@@ -115,21 +128,23 @@ public class Xserver {
     //
 
     // sleep in ms
-    static void sleep(int milliseconds) {
+    static void sleep(int milliseconds)
+    {
         try {
             TimeUnit.MILLISECONDS.sleep(milliseconds);
-        } catch (InterruptedException ignored) {
-        }
+        } catch (InterruptedException ignored) {}
     }
 
     // methods for handling errors, because I'm lazy to type it out each time
-    static void error(String err_msg) {
+    static void error(String err_msg)
+    {
         System.err.println("Error: " + err_msg);
         System.exit(1);
     }
 
     // overriding for the case of caught exception
-    static void error(String err_msg, String excep_msg) {
+    static void error(String err_msg, String excep_msg)
+    {
         System.err.println("Error: " + err_msg);
         System.err.println("This error was caused by the following exception:");
         System.err.println(excep_msg);
@@ -137,20 +152,16 @@ public class Xserver {
     }
 
     // debug method
-    static void debug(String msg) {
-        debug(msg, true);
-    }
-
-    static void debug(String msg, boolean ln) {
+    static void debug(String msg)
+    {
         if (DEBUG)
-            if (ln)
-                System.out.println(msg);
-            else
-                System.out.print(msg);
+            System.out.println(msg);
     }
 }
 
-class XserverThread implements Runnable {
+
+class XserverThread implements Runnable
+{
     BlockingQueue<Socket> queue;
     String root;
 
@@ -161,20 +172,24 @@ class XserverThread implements Runnable {
     }
 
     @Override
-    public void run() {
-        while (true) {
-            try {
+    public void run()
+    {
+        while (true)
+        {
+            try
+            {
                 Socket socket = queue.take();
                 new XserverProcessor(socket, root);
             } catch (InterruptedException e) {
-                break;
+                break; // interrupt = terminate thread
             }
         }
     }
 }
 
 
-class XserverProcessor {
+class XserverProcessor
+{
     Socket socket;
     PrintStream writer;
     BufferedReader reader;
@@ -186,13 +201,14 @@ class XserverProcessor {
     Boolean file_exist;
     String root_dir;
 
-
-    public XserverProcessor(Socket client_socket, String root) {
+    public XserverProcessor(Socket client_socket, String root)
+    {
         socket = client_socket;
         root_dir = root;
 
         openConnection();
 
+        // main loop
         do
         {
             processRequest();
@@ -203,7 +219,19 @@ class XserverProcessor {
         closeConnection();
     }
 
-    void processRequest() {
+    void openConnection()
+    {
+        try
+        {
+            reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+            writer = new PrintStream(socket.getOutputStream());
+        } catch (IOException e) {
+            error("Failed to set up buffered reader/writer", e.getMessage());
+        }
+    }
+
+    void processRequest()
+    {
         file_exist = true;
         response_ok = 200;
         if (!readHeader())
@@ -222,7 +250,8 @@ class XserverProcessor {
     }
 
 
-    boolean readHeader() {
+    boolean readHeader()
+    {
         req_header = new ArrayList<>();
         try {
             for (int i = 0; ; i++) {
@@ -241,7 +270,8 @@ class XserverProcessor {
         return true;
     }
 
-    boolean analyzeHeader() {
+    boolean analyzeHeader()
+    {
         Pattern r = Pattern.compile("(GET) (/[^ ]*) (HTTP/1.1)$");
         Matcher m = r.matcher(req_header.get(0));
 
@@ -262,17 +292,18 @@ class XserverProcessor {
         return true;
     }
 
-    boolean getFile() {
+    void getFile()
+    {
         debug("Path: " + path);
         if (path.equals(":tag:bad_request"))
         {
             file = message400();
             response_ok = 400;
-            return false;
+            return;
         }
         else if (path.equals("/")) {
             file = messageIndex();
-            return true;
+            return;
         }
         else
         {
@@ -280,56 +311,36 @@ class XserverProcessor {
         }
         debug("Full Path: " + path);
 
-        try {
-//            File req_file = new File(path);
-//            file_reader = new BufferedReader(new FileReader(path));
-//
-//            String line;
-//            file = "";
-//            while (file_reader.ready())
-//            {
-//                line = file_reader.readLine();
-//                debug(line);
-//                file += (line + "\r\n");
-//            }
+        try
+        {
             file = new String(Files.readAllBytes(Paths.get(path)), StandardCharsets.UTF_8);
-
         } catch (IOException e)
         {
             file = message404();
             response_ok = 404;
         }
-        return true;
     }
 
-    void writeResponse(int response_ok) {
-        if (response_ok == 200) {
+    void writeResponse(int response_ok)
+    {
+        if (response_ok == 200)
             writer.println("HTTP/1.1 200 OK");
-
-        } else if (response_ok == 400){
+        else if (response_ok == 400)
             writer.println("HTTP/1.1 400 Bad Request");
-        } else if(response_ok == 404) {
+        else if(response_ok == 404)
             writer.println("HTTP/1.1 404 Not Found");
-        }
-//        writer.println("Content-Type: radioactive");
+
+
         writer.println("Content-Length: " + file.length());
         writer.println();
         writer.print(file);
-//        writer.print("\r\n");
         writer.flush();
     }
 
-    void openConnection() {
-        try {
-            reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-            writer = new PrintStream(socket.getOutputStream());
-        } catch (IOException e) {
-            error("Failed to set up buffered reader/writer", e.getMessage());
-        }
-    }
-
-    void closeConnection() {
-        try {
+    void closeConnection()
+    {
+        try
+        {
             socket.close();
             reader.close();
             writer.close();
@@ -380,15 +391,9 @@ class XserverProcessor {
     }
 
     // debug method
-    static void debug(String msg) {
-        debug(msg, true);
-    }
-
-    static void debug(String msg, boolean ln) {
-        if (ln)
-            System.out.println(msg);
-        else
-            System.out.print(msg);
+    static void debug(String msg)
+    {
+        System.out.println(msg);
     }
 }
 
